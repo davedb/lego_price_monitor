@@ -10,7 +10,6 @@ import smtplib
 import pymongo
 
 import config
-import utils
 
 class LegoPriceMonitor:
 
