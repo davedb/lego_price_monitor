@@ -10,6 +10,7 @@ import smtplib
 import pymongo
 
 import config
+import utils
 
 class LegoPriceMonitor:
 
@@ -23,81 +24,8 @@ class LegoPriceMonitor:
 
         self.load_data()
 
-    def connect_to_db(self):
-        f = open(config.MONGO_SECRET_FILE, 'r')
-        ulist = f.read().split(',')
-        mongo_u = ulist[0].strip()
-        mongo_p = ulist[1].strip()
-        f.close()
-
-        client = pymongo.MongoClient(config.MONGODB_HOST, config.MONGO_PORT)
-        try:
-            client['admin'].authenticate(mongo_u, mongo_p, mechanism='SCRAM-SHA-1')
-            main_db = client[config.MAIN_DB]
-            self.main_collection = main_db[self.collection_to_save_to]
-            #print(type(self.main_collection))
-        except Exception as e:
-            print('mongo db auth error %s' % e)
-            return self
-
-    def save_date_to_db(self, data):
-
-        if not self.main_collection:
-            self.connect_to_db()
-
-        for el in data:
-            doc_to_save = {
-                'seo_path': el['seo_path'],
-                'product_code': el['product_code'],
-                'list_price': el['skus'][0]['list_price'],
-                'on_sale': el['skus'][0]['on_sale'],
-                'sale_price': el['skus'][0]['sale_price'],
-                'featured': el['featured'],
-                'piece_count':el['piece_count'],
-                'availability_status':el['skus'][0]['general_availability']['availability_status'],
-                'available_date':el['skus'][0]['general_availability']['available_date'],
-            }
-
-            self.main_collection.insert(doc_to_save)
-
-    def get_items_from_db(self):
-        if not self.main_collection:
-            self.connect_to_db()
-
-        return self.main_collection.find()
-
-    def check_data_to_update(self, data_to_update):
-        data_to_update_checked = []
-        for item in data_to_update:
-            items_in_db = self.main_collection.find({'product_code': item['product_code']})
-
-            items_are_different = False
-
-            for item_in_db in items_in_db:
-                for prop in self.docs_properties:
-                    try:
-                        if item[prop] != item_in_db[prop]:
-                            items_are_different = True
-                    except KeyError as e:
-                        try:
-                            if item['skus'][0][prop] != item_in_db[prop]:
-                                items_are_different = True
-                        except KeyError as e:
-                            if item['skus'][0]['general_availability'][prop] != item_in_db[prop]:
-                                items_are_different = True
-
-
-                        #print(item['skus'][0][prop])
-
-                    # print(item_in_db[prop])
-
-
-            if items_are_different:
-                data_to_update_checked.append(item)
-
-        return data_to_update_checked
-
     def send_email(self, data_new, data_updated):
+        print('Sending Email')
         # set up the SMTP server
         server = smtplib.SMTP(host='smtp.gmail.com', port=587)
         server.starttls()
@@ -128,8 +56,89 @@ class LegoPriceMonitor:
         server.sendmail(from_addr, to_addrs, msg)
         server.quit()
 
+    def check_data_to_update(self, data_to_update):
+        data_to_update_checked = []
+        for item in data_to_update:
+            items_in_db = self.main_collection.find({'product_code': item['product_code']})
+
+            items_are_different = False
+
+            #get only the latest doc and comparing to it
+            latest_doc = None
+            for item_in_db in items_in_db:
+                if latest_doc == None:
+                    latest_doc = item_in_db
+                elif item_in_db['_id'].generation_time > latest_doc['_id'].generation_time:
+                    latest_doc = item_in_db
+
+
+            for prop in self.docs_properties:
+                try:
+                    if item[prop] != latest_doc[prop]:
+                        items_are_different = True
+                        #print(item[prop], latest_doc[prop])
+                except KeyError as e:
+                    try:
+                        if item['skus'][0][prop] != latest_doc[prop]:
+                            items_are_different = True
+                            #print(item['skus'][0][prop], latest_doc[prop])
+                    except KeyError as e:
+                        if item['skus'][0]['general_availability'][prop] != latest_doc[prop]:
+                            items_are_different = True
+                            #print(item['skus'][0]['general_availability'][prop], latest_doc[prop])
+
+
+            if items_are_different:
+                data_to_update_checked.append(item)
+
+        return data_to_update_checked
+
+    # utils
+    def connect_to_db(self):
+        f = open(config.MONGO_SECRET_FILE, 'r')
+        ulist = f.read().split(',')
+        mongo_u = ulist[0].strip()
+        mongo_p = ulist[1].strip()
+        f.close()
+
+        client = pymongo.MongoClient(config.MONGODB_HOST, config.MONGO_PORT)
+        try:
+            client['admin'].authenticate(mongo_u, mongo_p, mechanism='SCRAM-SHA-1')
+            main_db = client[config.MAIN_DB]
+            self.main_collection = main_db[self.collection_to_save_to]
+            #print(type(self.main_collection))
+        except Exception as e:
+            print('mongo db auth error %s' % e)
+            return self
+
+    def save_date_to_db(self, data):
+        print('Saving data to db')
+        if not self.main_collection:
+            self.connect_to_db()
+
+        for el in data:
+            doc_to_save = {
+                'seo_path': el['seo_path'],
+                'product_code': el['product_code'],
+                'list_price': el['skus'][0]['list_price'],
+                'on_sale': el['skus'][0]['on_sale'],
+                'sale_price': el['skus'][0]['sale_price'],
+                'featured': el['featured'],
+                'piece_count':el['piece_count'],
+                'availability_status':el['skus'][0]['general_availability']['availability_status'],
+                'available_date':el['skus'][0]['general_availability']['available_date'],
+            }
+
+            self.main_collection.insert(doc_to_save)
+
+    def get_items_from_db(self):
+        if not self.main_collection:
+            self.connect_to_db()
+
+        return self.main_collection.find()
 
     def load_data(self):
+        print('Loading data from url')
         resp = requests.get(url=self.link_to_parse)
         data = json.loads(resp.text)
 
@@ -167,18 +176,18 @@ class LegoPriceMonitor:
 
        """
         # print('seo_path', 'Code', 'Price', 'On Sale', 'Sale Price', 'Feature', 'Piece', 'Availability', 'available_date', )
-        for el in data['results']:
-            print(el['seo_path'],
-                el['product_code'],
-                el['skus'][0]['list_price'],
-                el['skus'][0]['on_sale'],
-                el['skus'][0]['sale_price'],
-                el['featured'],
-                el['piece_count'],
-                el['skus'][0]['general_availability']['availability_status'],
-                el['skus'][0]['general_availability']['available_date'],
-            )
-            break
+        # for el in data['results']:
+        #     print(el['seo_path'],
+        #         el['product_code'],
+        #         el['skus'][0]['list_price'],
+        #         el['skus'][0]['on_sale'],
+        #         el['skus'][0]['sale_price'],
+        #         el['featured'],
+        #         el['piece_count'],
+        #         el['skus'][0]['general_availability']['availability_status'],
+        #         el['skus'][0]['general_availability']['available_date'],
+        #     )
+        #     break
 
         try:
             products_code_known = [item['product_code'] for item in self.get_items_from_db()]
@@ -191,22 +200,26 @@ class LegoPriceMonitor:
         data_to_update = [item for item in data['results'] if item['product_code'] in products_code_known]
         data_to_update_checked = []
 
+
         if len(data_to_save) > 0:
             self.save_date_to_db(data_to_save)
 
+
         if len(data_to_update) > 0:
             data_to_update_checked = self.check_data_to_update(data_to_update)
-            self.save_date_to_db(data_to_update_checked)
+            if len(data_to_update_checked) > 0:
+                self.save_date_to_db(data_to_update_checked)
 
         if len(data_to_save) > 0 or len(data_to_update_checked) > 0:
             self.send_email(data_to_save, data_to_update_checked)
 
 
 def main(args):
-    print(args)
+    print('Current Args: {0}'.format(args))
     lego_price_monitor = LegoPriceMonitor(args.link_to_parse, args.collection_to_save_to)
 
 def parse_args():
+    print('Parsing Argument ..')
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--link_to_parse', type=str, default=config.DEFAULT_LINK_TO_PARSE,
                         help='Link to parse data (usually a json from lego shop)')
