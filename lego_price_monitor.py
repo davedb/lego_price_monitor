@@ -36,24 +36,51 @@ class LegoPriceMonitor:
         server.login(mail_u, mail_p)
 
         from_addr = 'LegoPriceMonitor@davidediblasi.net'
-        to_addrs  = ','.join(config.MAIL_RECEIVERS)
+        if config.DEV == True:
+            to_addrs = config.MAIL_RECEIVERS[0]
+        else:
+            to_addrs  = ','.join(config.MAIL_RECEIVERS)
         subject = "Lego Price Monitor Update"
 
         msg = "Subject: {0}\n\n".format(subject)
         msg = msg + "From: {0}\r\nTo: {1}\r\n\r\n".format(from_addr, to_addrs)
 
-        msg = msg + "Nuovi Dati:"
-        for d in data_new:
-            msg = msg + '\n  {0} | codice: {1}'.format(d['seo_path'], d['product_code'])
+        if len(data_new) > 0:
+            msg = msg + "Nuovi Dati:"
+            for d in data_new:
+                msg = msg + '\n\n  {0} - codice: {1}'.format(d['seo_path'], d['product_code'])
+                msg = msg + '\n    | prezzo: {0}'.format(d['skus'][0]['list_price'])
 
-        msg = msg + "\nDati Aggiornati:"
-        for d in data_updated:
-            msg = msg + '\n  {0} | codice: {1}'.format(d['seo_path'], d['product_code'])
+        if len(data_updated) > 0:
+            msg = msg + "\n\n--------------------------------------------------------------------\n\nDati Aggiornati:"
+            for d in data_updated:
+                msg = msg + '\n\n  {0} - codice: {1},'.format(d['seo_path'], d['product_code'])
+
+                property_updated_label = None
+                property_updated_value = None
+
+                for updated_prop in d['diff']:
+                    if type(updated_prop) == list:
+                        property_updated_value = d
+                        for el in updated_prop:
+                            property_updated_value = property_updated_value[el]
+                            property_updated_label = el
+                    else:
+                        property_updated_label = updated_prop
+                        property_updated_value = d[updated_prop]
+
+                    print(property_updated_label, property_updated_value)
+
+                    msg = msg + '\n    | campo aggiornato: {0}, valore: {1}'.format(property_updated_label, property_updated_value)
 
 
-        #print(msg)
-        server.sendmail(from_addr, to_addrs, msg)
-        server.quit()
+
+        #
+        if config.DEV == True:
+            print(msg)
+        else:
+            server.sendmail(from_addr, to_addrs, msg)
+            server.quit()
 
     def check_data_to_update(self, data_to_update):
         data_to_update_checked = []
@@ -75,15 +102,19 @@ class LegoPriceMonitor:
                 try:
                     if item[prop] != latest_doc[prop]:
                         items_are_different = True
+                        item.setdefault('diff',[]).append(prop)
                         #print(item[prop], latest_doc[prop])
                 except KeyError as e:
                     try:
                         if item['skus'][0][prop] != latest_doc[prop]:
                             items_are_different = True
+                            item.setdefault('diff',[]).append(['skus',0,prop])
+
                             #print(item['skus'][0][prop], latest_doc[prop])
                     except KeyError as e:
                         if item['skus'][0]['general_availability'][prop] != latest_doc[prop]:
                             items_are_different = True
+                            item.setdefault('diff',[]).append(['skus',0,'general_availability',prop])
                             #print(item['skus'][0]['general_availability'][prop], latest_doc[prop])
 
 
@@ -201,14 +232,18 @@ class LegoPriceMonitor:
 
 
         if len(data_to_save) > 0:
-            self.save_date_to_db(data_to_save)
+            if config.DEV ==False:
+                self.save_date_to_db(data_to_save)
 
 
         if len(data_to_update) > 0:
             data_to_update_checked = self.check_data_to_update(data_to_update)
+            #print(data_to_update_checked)
             if len(data_to_update_checked) > 0:
-                self.save_date_to_db(data_to_update_checked)
+                if config.DEV ==False:
+                    self.save_date_to_db(data_to_update_checked)
 
+        #return
         if len(data_to_save) > 0 or len(data_to_update_checked) > 0:
             self.send_email(data_to_save, data_to_update_checked)
 
